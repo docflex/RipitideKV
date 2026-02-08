@@ -131,4 +131,32 @@ mod tests {
         m.delete(b"a".to_vec(), 3);
         assert_eq!(m.approx_size(), 0);
     }
+
+    #[test]
+    fn older_seq_never_overwrites_newer() {
+        let mut m = Memtable::new();
+
+        m.put(b"k".to_vec(), b"v1".to_vec(), 5);
+        m.put(b"k".to_vec(), b"v2".to_vec(), 3);
+
+        assert_eq!(m.get(b"k").unwrap().1, b"v1");
+    }
+
+    #[test]
+    fn delete_overrides_old_value() {
+        let mut m = Memtable::new();
+
+        m.put(b"k".to_vec(), b"v".to_vec(), 1);
+        m.delete(b"k".to_vec(), 2);
+
+        assert!(m.get(b"k").is_none());
+    }
+
+    #[test]
+    fn tombstone_is_retained_in_memtable() {
+        let mut m = Memtable::new();
+        m.delete(b"k".to_vec(), 1);
+
+        assert_eq!(m.len(), 1);
+    }
 }
