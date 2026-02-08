@@ -1,0 +1,9 @@
+[package]
+name = "kv-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+memtable = { path = "../memtable" }
+wal = { path = "../wal" }
+anyhow = "1.0"
