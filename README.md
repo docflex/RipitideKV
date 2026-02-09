@@ -1,104 +1,242 @@
+Nice project. The content is solid — it just needs tightening, consistency, and a bit of polish so it reads like a clean, intentional roadmap instead of working notes.
+
+Below is a **cleaned-up, more readable README** with:
+
+* consistent headings
+* tighter language
+* fixed grammar/typos
+* clearer deliverables vs. design decisions
+* minimal rewording (no scope creep)
+
+---
+
 # RiptideKV
 
-A learning project to build a simple Log-Structured Merge (LSM) key–value store in Rust.
+**RiptideKV** is a learning project to build a simple **Log-Structured Merge (LSM) key–value store** in Rust.
+The goal is to understand storage engine internals by implementing them incrementally and correctly, not to ship a production database.
+
+---
 
 ## Goals
 
-- Learn Rust fundamentals in a systems context
-- Incrementally build an LSM-style storage engine
-- Practice testing, CI, and clean architecture
+* Learn Rust fundamentals in a systems programming context
+* Incrementally build an LSM-style storage engine
+* Practice testing, CI, and clean architecture
 
 ## Non-Goals (for now)
 
-- Production performance
-- Distributed consensus
-- Persistence guarantees beyond learning needs
+* Production-grade performance
+* Distributed systems or consensus
+* Strong persistence guarantees beyond learning needs
+
+---
 
 ## Glossary
 
-- **LSM**: Log-Structured Merge tree, a write-optimized storage structure
-- **Memtable**: In-memory, mutable structure holding recent writes
-- **SSTable**: Immutable on-disk sorted string table
-- **Compaction**: Merging SSTables to remove duplicates and reclaim space
-- **WAL**: Write-Ahead Log for crash recovery
+* **LSM** — Log-Structured Merge tree; a write-optimized storage structure
+* **Memtable** — In-memory, mutable structure holding recent writes
+* **SSTable** — Immutable, on-disk sorted string table
+* **Compaction** — Merging SSTables to remove duplicates and reclaim space
+* **WAL** — Write-Ahead Log used for crash recovery
 
-### Phase 0 — Rust fundamentals & repo setup (deliverables)
+---
 
-- Deliverables:
-    - Repo skeleton with Cargo workspace, CI (GitHub Actions), linting (clippy), formatting (rustfmt).
-    - A README with project goals + glossary (LSM, memtable, sstable, compaction, WAL).
-- Learning tasks (self-study + tiny exercises):
-    - Rust basics: ownership, borrowing, lifetimes, traits, `Result`/`Option`, pattern matching.
-    - Modules, crates, cargo, unit testing.
-    - Concurrency primitives and `async`/`await`.
-    - Exercises: implement a command-line toy that stores key→value in-memory (HashMap), tests, and cargo fmt/clippy.
-- Tools: use `rustup`, `cargo`, and add `clippy`, `rustfmt`.
+## Phase 0 — Rust fundamentals & repository setup
 
-### Phase 1 — Core LSM (in-memory + on-disk basic) (deliverables)
+### Deliverables
 
-- Deliverables:
-    - Memtable (ordered) with unit tests.
-    - WAL append with safe fsync and recovery test (crash simulation).
-    - SSTable writer and reader (simple block layout, uncompressed).
-    - A small CLI that can SET/GET locally (no networking).
-- Design choices (locked):
-    - Memtable implementation: start with `BTreeMap<Vec<u8>, ValueEntry>` (easy for Rust beginners); later swap to a skiplist if you want lock-free behavior.
-    - WAL: append binary records: `[len][crc32][key_len][key][value_len][value]`. Use CRC per record for corruption detection.
-    - SSTable layout: write data blocks where each block contains contiguous entries; build a small in-memory sparse index (key → block offset) when opening file.
-    - Recovery: on startup list SSTables, read manifest (or derive from filenames), then apply WALs (newest to oldest) to rebuild memtable.
+* Repository skeleton with:
 
-#### 1. Writing to Memtable and then WAL
-<video src="https://github.com/user-attachments/assets/2796768c-c503-4059-92c8-f81df1ed1af5"/>
+  * Cargo workspace
+  * CI (GitHub Actions)
+  * Linting (`clippy`)
+  * Formatting (`rustfmt`)
+* README describing project goals and glossary
 
-#### 2. When Threshold Exceeds SST Added and WAL Flushed
-<video src="https://github.com/user-attachments/assets/91ea66fd-4644-4426-b2d2-781c73b62785"/>
+### Learning Tasks
 
-#### 3. Memtables to WAL post SST Creation
-<video src="https://github.com/user-attachments/assets/470c24d4-734b-49a5-ae42-b21b665e1c55"/>
+* Rust fundamentals:
 
-#### 4. Deletion Propogated Across via Writes
-<video src="https://github.com/user-attachments/assets/b377b71d-7327-49e6-b717-f8ea87ac6049"/>
+  * Ownership, borrowing, lifetimes
+  * Traits
+  * `Result` / `Option`
+  * Pattern matching
+* Modules, crates, Cargo, and unit testing
+* Concurrency primitives and `async` / `await`
+* Exercises:
 
-### Phase 2 — Reads, bloom filters, and compaction basics (deliverables)
+  * Implement a simple CLI storing key → value in memory (`HashMap`)
+  * Add tests
+  * Enforce `cargo fmt` and `cargo clippy`
 
-- Deliverables:
-    - Read path: search memtable → recent SSTables (using bloom filter & index) → older SSTables (merge results).
-    - Bloom filter implementation per SSTable.
-    - Simple compaction: merge two or more SSTables into a new one; remove deleted keys / tombstones.
-    - Tests for correctness (reads across levels, deletion semantics).
-- Design choices:
-    - Use a per-SSTable bloom filter to avoid disk reads when key absent.
-    - Tombstones for deletes: store tombstone markers during deletes and remove during compaction.
+### Tooling
 
-### Phase 3 — Robustness, concurrency & configuration knobs (deliverables)
+* `rustup`
+* `cargo`
+* `clippy`
+* `rustfmt`
 
-- Deliverables:
-    - Background compaction worker; max concurrent compactions configurable.
-    - Config knobs for memtable size, compaction thresholds, WAL durability (`fsync` on every write vs batched).
-    - Snapshot support (point-in-time view) possibly via sequence numbers.
-    - More extensive tests: crash (kill while compaction), recovery, read/write consistency.
-- Design choices:
-    - Compaction worker scheduling: simple priority rule (smallest level first).
-    - Sequence numbers per write to support consistent snapshots.
+---
 
-### Phase 4 — RESP server & Java compatibility (deliverables)
+## Phase 1 — Core LSM (in-memory + basic on-disk)
 
-- Deliverables:
-    - RESP server supporting GET/SET/DEL and PING/INFO. Existing Redis clients should work unchanged.
-    - Integration tests using a Java Redis client (e.g., Jedis) to exercise GET/SET/DEL.
-    - Basic telemetry (metrics endpoint or INFO command).
-- Design choices:
-    - Implement RESP parser (RESP2 subset first) and dispatcher in Tokio.
-    - Command execution path: parse → map to engine call → write response.
-    - Keep networking async; ensure storage engine calls that block are done in `spawn_blocking` or are non-blocking.
+### Deliverables
 
-### Phase 5 — Performance, features, and polish (deliverables)
+* Ordered memtable with unit tests
+* Write-Ahead Log (WAL):
 
-- Deliverables:
-    - Benchmarks and tuning (use `criterion` or custom harness).
-    - Optional features: TTL (expire), persistence compaction strategies (leveled), compression (snappy), LRU cache for data blocks, memory limits.
-    - Documentation: design doc per component, API reference, "How it works" diagrams.
-    - Example Java app that uses a Redis client (Jedis/Lettuce) to replace Redis with your store.
-- Engineering tasks:
-    - Add metrics (prometheus), logging (tracing), CI for tests + benchmarks.
-    - Add fuzzing (`cargo-fuzz`) and property tests (quickcheck / proptest) for invariants.
+  * Append-only writes
+  * Safe `fsync`
+  * Recovery test via crash simulation
+* SSTable writer and reader:
+
+  * Simple block layout
+  * No compression
+* Small CLI supporting `SET` and `GET` (local only, no networking)
+
+### Design Decisions
+
+* **Memtable**:
+  Start with `BTreeMap<Vec<u8>, ValueEntry>` for simplicity; optionally replace with a skip list later.
+* **WAL format**:
+  Binary records:
+
+  ```
+  [len][crc32][key_len][key][value_len][value]
+  ```
+
+  CRC per record for corruption detection.
+* **SSTable layout**:
+
+  * Immutable data blocks containing contiguous entries
+  * Build a sparse in-memory index (key → block offset) on open
+* **Recovery**:
+
+  * Discover SSTables via manifest or filenames
+  * Replay WALs (newest to oldest) to rebuild the memtable
+
+### Write Path Demonstrations
+
+#### 1. Writing to Memtable, then WAL
+
+<video src="public/assets/memtable_wal.mp4" controls />
+
+#### 2. Memtable Threshold Exceeded → SSTable Created → WAL Flushed
+
+<video src="public/assets/flush_to_sstable.mp4" controls />
+
+#### 3. New Memtables Writing to WAL After SST Creation
+
+<video src="public/assets/new_memtable_after_flush.mp4" controls />
+
+#### 4. Deletions Propagated via Writes
+
+<video src="public/assets/delete_propagation.mp4" controls />
+
+
+---
+
+## Phase 2 — Reads, bloom filters, and compaction basics
+
+### Deliverables
+
+* Read path:
+
+  * Memtable
+  * Newest SSTables (via bloom filter + index)
+  * Older SSTables (merged results)
+* Bloom filter per SSTable
+* Basic compaction:
+
+  * Merge multiple SSTables
+  * Drop obsolete keys and tombstones
+* Tests covering:
+
+  * Reads across levels
+  * Delete semantics
+
+### Design Decisions
+
+* Use per-SSTable bloom filters to avoid unnecessary disk reads
+* Represent deletes using tombstones; remove them during compaction
+
+---
+
+## Phase 3 — Robustness, concurrency, and configuration
+
+### Deliverables
+
+* Background compaction worker
+* Configurable:
+
+  * Memtable size
+  * Compaction thresholds
+  * WAL durability (`fsync` per write vs batched)
+* Snapshot support (point-in-time reads)
+* Extended test coverage:
+
+  * Crash during compaction
+  * Recovery correctness
+  * Read/write consistency
+
+### Design Decisions
+
+* Compaction scheduling: prioritize smallest levels first
+* Use sequence numbers per write to support snapshots
+
+---
+
+## Phase 4 — RESP server & Java compatibility
+
+### Deliverables
+
+* RESP server supporting:
+
+  * `GET`, `SET`, `DEL`
+  * `PING`, `INFO`
+* Compatibility with existing Redis clients
+* Integration tests using a Java Redis client (e.g. Jedis)
+* Basic telemetry (metrics endpoint or `INFO` output)
+
+### Design Decisions
+
+* Implement RESP2 subset first
+* Async networking using Tokio
+* Ensure blocking storage operations run in `spawn_blocking` or are non-blocking
+
+---
+
+## Phase 5 — Performance, features, and polish
+
+### Deliverables
+
+* Benchmarks and tuning (`criterion` or custom harness)
+* Optional features:
+
+  * TTL / expiration
+  * Leveled compaction
+  * Compression (e.g. Snappy)
+  * LRU cache for data blocks
+  * Memory limits
+* Documentation:
+
+  * Per-component design docs
+  * API reference
+  * Architecture diagrams
+* Example Java application replacing Redis with RiptideKV
+
+### Engineering Tasks
+
+* Metrics (Prometheus)
+* Structured logging (`tracing`)
+* CI for tests and benchmarks
+* Fuzzing (`cargo-fuzz`)
+* Property-based testing (`quickcheck` / `proptest`)
+
+---
+
+If you want, I can also:
+
+* tighten this further into a **one-page README**
+* split it into **README + DESIGN.md**
+* or rewrite it in a more **“database internals blog series”** tone
