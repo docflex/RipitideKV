@@ -102,27 +102,19 @@ The goal is to understand storage engine internals by implementing them incremen
 
 #### 1. Writing to Memtable, then WAL
 
-<video autoplay muted playsinline controls>
-  <source src="public/assets/memtable_wal.mp4" type="video/mp4">
-</video>
+![Memtable → WAL](public/assets/memtable_wal.gif)
 
 #### 2. Memtable Threshold Exceeded → SSTable Created → WAL Flushed
 
-<video autoplay muted playsinline controls>
-  <source src="public/assets/flush_to_sstable.mp4" type="video/mp4">
-</video>
+![Flush to SSTable](public/assets/flush_to_sstable.gif)
 
 #### 3. New Memtables Writing to WAL After SST Creation
 
-<video autoplay muted playsinline controls>
-  <source src="public/assets/new_memtable_after_flush.mp4" type="video/mp4">
-</video>
+![New Memtable After Flush](public/assets/new_memtable_after_flush.gif)
 
 #### 4. Deletions Propagated via Writes
 
-<video autoplay muted playsinline controls>
-  <source src="public/assets/delete_propagation.mp4" type="video/mp4">
-</video>
+![Delete Propagation](public/assets/delete_propagation.gif)
 
 ---
 
