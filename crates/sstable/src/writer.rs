@@ -5,37 +5,37 @@ use std::fs::{rename, OpenOptions};
 use std::io::{Seek, Write};
 use std::path::Path;
 
-/// Magic identifying our SSTable v1
-// const SSTABLE_MAGIC: u32 = 0x5353_5431; // ASCII "SST1"
 use crate::format::write_footer;
 
-pub struct SsTableWriter {}
+/// Writes a [`Memtable`] to disk as an immutable SSTable file.
+///
+/// The writer is stateless — all work happens inside the single static method
+/// [`write_from_memtable`](SSTableWriter::write_from_memtable). The write is
+/// crash-safe: data is first written to a temporary file, fsynced, and then
+/// atomically renamed to the final path.pub struct SSTableWriter {}
+pub struct SSTableWriter {}
 
-impl SsTableWriter {
-    /// Write an SSTable at `path` from the given memtable.
+impl SSTableWriter {
+    /// Flushes `mem` to a new SSTable file at `path`.
     ///
-    /// Format (v1, minimal):
-    /// [DATA] repeated entries:
-    ///   u32 key_len
-    ///   key bytes
-    ///   u64 seq
-    ///   u8 value_present (0/1)
-    ///   if value_present == 1:
-    ///       u32 value_len
-    ///       value bytes
+    /// # File Layout (v1)
     ///
-    /// [INDEX] repeated:
-    ///   u32 key_len
-    ///   key bytes
-    ///   u64 data_offset
+    /// ```text
+    /// [DATA]   repeated: key_len(u32) | key | seq(u64) | present(u8) | [val_len(u32) | val]
+    /// [INDEX]  repeated: key_len(u32) | key | data_offset(u64)
+    /// [FOOTER] index_offset(u64) | magic(u32 = "SST1")
+    /// ```
     ///
-    /// [FOOTER]:
-    ///   u64 index_offset
-    ///   u32 magic ("SST1")
+    /// # Crash Safety
     ///
-    /// Implementation notes:
-    /// - Writes to a temp file in the same directory, fsyncs, then atomically renames.
-    /// - Index is kept in memory while writing (vector of (key, offset)).
+    /// Writes to `path.sst.tmp`, calls `sync_all()`, then atomically renames.
+    /// If the process crashes mid-write the temp file is left behind and
+    /// ignored on recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the memtable is empty (writing an empty SSTable is
+    /// not useful and likely indicates a logic bug) or on any I/O failure.
     pub fn write_from_memtable(path: &Path, mem: &Memtable) -> Result<()> {
         // Create temporary file next to target for atomic rename later
         let tmp_path = path.with_extension("sst.tmp");
@@ -123,7 +123,7 @@ mod tests {
         let path = dir.path().join("test.sst");
 
         let mem = make_sample_memtable();
-        SsTableWriter::write_from_memtable(&path, &mem)?;
+        SSTableWriter::write_from_memtable(&path, &mem)?;
 
         // File should exist and be non-empty
         let meta = std::fs::metadata(&path)?;

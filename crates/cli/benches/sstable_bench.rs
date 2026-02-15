@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use memtable::Memtable;
-use sstable::{SsTableReader, SsTableWriter};
+use sstable::{SSTableReader, SSTableWriter};
 use tempfile::tempdir;
 
 const N_KEYS: usize = 10_000;
@@ -28,7 +28,7 @@ fn sstable_write_benchmark(c: &mut Criterion) {
                 (dir, path, mem)
             },
             |(_dir, path, mem)| {
-                SsTableWriter::write_from_memtable(&path, &mem).unwrap();
+                SSTableWriter::write_from_memtable(&path, &mem).unwrap();
             },
             BatchSize::SmallInput,
         );
@@ -43,9 +43,9 @@ fn sstable_get_hit_benchmark(c: &mut Criterion) {
                 let path = dir.path().join("bench.sst");
 
                 let mem = build_memtable();
-                SsTableWriter::write_from_memtable(&path, &mem).unwrap();
+                SSTableWriter::write_from_memtable(&path, &mem).unwrap();
 
-                let reader = SsTableReader::open(&path).unwrap();
+                let reader = SSTableReader::open(&path).unwrap();
                 (dir, reader)
             },
             |(_dir, reader)| {
@@ -68,9 +68,9 @@ fn sstable_get_miss_benchmark(c: &mut Criterion) {
                 let path = dir.path().join("bench.sst");
 
                 let mem = build_memtable();
-                SsTableWriter::write_from_memtable(&path, &mem).unwrap();
+                SSTableWriter::write_from_memtable(&path, &mem).unwrap();
 
-                let reader = SsTableReader::open(&path).unwrap();
+                let reader = SSTableReader::open(&path).unwrap();
                 (dir, reader)
             },
             |(_dir, reader)| {
@@ -91,4 +91,5 @@ criterion_group!(
     sstable_get_hit_benchmark,
     sstable_get_miss_benchmark
 );
+
 criterion_main!(benches);

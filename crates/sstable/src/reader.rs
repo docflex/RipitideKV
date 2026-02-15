@@ -8,16 +8,36 @@ use std::path::{Path, PathBuf};
 
 use crate::format::{read_footer, SSTABLE_MAGIC};
 
-/// Simple reader that loads the index into memory for fast point lookups.
-/// It stores a map: key -> data_offset. When a key is requested,
-/// the reader opens the file, seeks to the offset, parses the record and returns it.
-pub struct SsTableReader {
+/// Reads an SSTable file for point lookups.
+///
+/// On [`open`](SSTableReader::open) the entire **index** is loaded into memory
+/// as a `BTreeMap<Vec<u8>, u64>` (key → data-section byte offset). Point
+/// lookups then require only a single disk seek + read per call.
+///
+/// The data file itself is **not** kept open between lookups — each
+/// [`get`](SSTableReader::get) call opens the file, seeks, reads the record,
+/// and closes the handle. This keeps ownership simple and avoids holding
+/// long-lived file descriptors.
+pub struct SSTableReader {
+    /// Path to the `.sst` file on disk.
     path: PathBuf,
+    /// In-memory index mapping each key to its byte offset in the data section.
     index: BTreeMap<Vec<u8>, u64>,
 }
 
-impl SsTableReader {
-    /// Open an SSTable and load its index into memory.
+impl SSTableReader {
+    /// Opens an SSTable file and loads its index into memory.
+    ///
+    /// # Validation
+    ///
+    /// - The file must be at least 12 bytes (footer size).
+    /// - The footer magic must equal `0x5353_5431` ("SST1").
+    /// - The `index_offset` must point inside the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file is too small, the magic is wrong, or any
+    /// I/O operation fails.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_buf = path.as_ref().to_path_buf();
         let mut f = File::open(&path_buf)?;
@@ -57,10 +77,19 @@ impl SsTableReader {
         })
     }
 
-    /// Point lookup. Returns the raw ValueEntry (seq + optional value) if present in this SSTable.
+    /// Point lookup for a single key.
     ///
-    /// Note: this reads the record from disk for the matching offset and returns it.
-    /// If the key is not present in the index, returns Ok(None).
+    /// Returns `Ok(Some(entry))` if the key exists in this SSTable (the entry
+    /// may be a tombstone with `value: None`). Returns `Ok(None)` if the key
+    /// is not present in the index.
+    ///
+    /// Each call opens the file, seeks to the record offset, reads and parses
+    /// the record, then closes the file handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on I/O failure or if the on-disk key does not match
+    /// the requested key (index corruption).
     pub fn get(&self, key: &[u8]) -> Result<Option<ValueEntry>> {
         let maybe_offset = self.index.get(key);
         if maybe_offset.is_none() {
@@ -104,7 +133,21 @@ impl SsTableReader {
         }
     }
 
-    /// Expose the loaded keys for debugging / tests.
+    /// Returns the number of entries in the in-memory index.
+    pub fn len(&self) -> usize {
+        self.index.len()
+    }
+
+    /// Returns `true` if the SSTable contains zero entries.
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
+    /// Returns an iterator over all keys in the in-memory index.
+    ///
+    /// Keys are yielded in ascending sorted order (guaranteed by `BTreeMap`).
+    ///
+    /// Useful for debugging, testing, and future range-scan support.
     pub fn keys(&self) -> impl Iterator<Item = &Vec<u8>> {
         self.index.keys()
     }
@@ -113,7 +156,7 @@ impl SsTableReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SsTableWriter;
+    use crate::SSTableWriter;
     use memtable::Memtable;
     use tempfile::tempdir;
 
@@ -126,16 +169,16 @@ mod tests {
         m
     }
 
+    // -------------------- Basic open & get --------------------
+
     #[test]
     fn open_and_get_entries() -> Result<()> {
         let dir = tempdir()?;
         let path = dir.path().join("sample.sst");
 
         let mem = make_sample_memtable();
-        SsTableWriter::write_from_memtable(&path, &mem)?;
-
-        // Open reader and verify values
-        let reader = SsTableReader::open(&path)?;
+        SSTableWriter::write_from_memtable(&path, &mem)?;
+        let reader = SSTableReader::open(&path)?;
 
         // Check keys exist in index
         let keys: Vec<_> = reader.keys().cloned().collect();
@@ -167,6 +210,117 @@ mod tests {
         // Non-existent key
         assert!(reader.get(b"nope")?.is_none());
 
+        Ok(())
+    }
+
+    // -------------------- len / is_empty --------------------
+
+    #[test]
+    fn len_and_is_empty() -> Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("len.sst");
+
+        let mem = make_sample_memtable();
+        SSTableWriter::write_from_memtable(&path, &mem)?;
+
+        let reader = SSTableReader::open(&path)?;
+        assert_eq!(reader.len(), 4);
+        assert!(!reader.is_empty());
+        Ok(())
+    }
+
+    // -------------------- Validation errors --------------------
+
+    #[test]
+    fn open_file_too_small() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tiny.sst");
+        std::fs::write(&path, b"short").unwrap();
+
+        let result = SSTableReader::open(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn open_bad_magic() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("badmagic.sst");
+
+        // 12 bytes: 8 for index_offset + 4 for wrong magic
+        let mut data = vec![0u8; 8]; // index_offset = 0
+        data.extend_from_slice(&[0xBA, 0xAD, 0xF0, 0x0D]); // wrong magic
+        std::fs::write(&path, &data).unwrap();
+
+        let result = SSTableReader::open(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn open_nonexistent_file() {
+        let result = SSTableReader::open("/tmp/no_such_file_riptide.sst");
+        assert!(result.is_err());
+    }
+
+    // -------------------- Keys iterator ordering --------------------
+
+    #[test]
+    fn keys_are_sorted() -> Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("sorted.sst");
+
+        let mut mem = Memtable::new();
+        mem.put(b"z".to_vec(), b"1".to_vec(), 1);
+        mem.put(b"a".to_vec(), b"2".to_vec(), 2);
+        mem.put(b"m".to_vec(), b"3".to_vec(), 3);
+        SSTableWriter::write_from_memtable(&path, &mem)?;
+
+        let reader = SSTableReader::open(&path)?;
+        let keys: Vec<_> = reader.keys().cloned().collect();
+        assert_eq!(keys, vec![b"a".to_vec(), b"m".to_vec(), b"z".to_vec()]);
+        Ok(())
+    }
+
+    // -------------------- Multiple gets on same reader --------------------
+
+    #[test]
+    fn multiple_gets_same_reader() -> Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("multi.sst");
+
+        let mut mem = Memtable::new();
+        for i in 0..100u64 {
+            mem.put(format!("k{:03}", i).into_bytes(), b"v".to_vec(), i);
+        }
+        SSTableWriter::write_from_memtable(&path, &mem)?;
+
+        let reader = SSTableReader::open(&path)?;
+        // Read all keys twice to ensure re-opening the file works
+        for _ in 0..2 {
+            for i in 0..100u64 {
+                let key = format!("k{:03}", i).into_bytes();
+                let entry = reader.get(&key)?.unwrap();
+                assert_eq!(entry.seq, i);
+            }
+        }
+
+        Ok(())
+    }
+
+    // -------------------- Large values --------------------
+
+    #[test]
+    fn large_value_roundtrip() -> Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("bigval.sst");
+
+        let mut mem = Memtable::new();
+        let big = vec![b'x'; 500_000];
+        mem.put(b"big".to_vec(), big.clone(), 1);
+        SSTableWriter::write_from_memtable(&path, &mem)?;
+
+        let reader = SSTableReader::open(&path)?;
+        let entry = reader.get(b"big")?.unwrap();
+        assert_eq!(entry.value.unwrap().len(), 500_000);
         Ok(())
     }
 }

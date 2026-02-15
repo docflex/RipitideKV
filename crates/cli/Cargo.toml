@@ -12,7 +12,20 @@ anyhow = "1.0"
 [dev-dependencies]
 tempfile = "3"
 criterion = "0.5"
+byteorder = "1.5"
 
 [[bench]]
 name = "memtable_bench"
+harness = false
+
+[[bench]]
+name = "sstable_bench"
+harness = false
+
+[[bench]]
+name = "wal_bench"
+harness = false
+
+[[bench]]
+name = "engine_bench"
 harness = false

@@ -31,7 +31,7 @@ fn main() -> Result<()> {
                 "GET" => {
                     if let Some(k) = parts.next() {
                         match engine.get(k.as_bytes()) {
-                            Some((_s, v)) => println!("{}", String::from_utf8_lossy(&v)),
+                            Some((_seq, v)) => println!("{}", String::from_utf8_lossy(&v)),
                             None => println!("(nil)"),
                         }
                     } else {
@@ -55,6 +55,7 @@ fn main() -> Result<()> {
                 }
             }
         }
+
         print!("> ");
         io::stdout().flush().ok();
     }
@@ -126,10 +127,29 @@ mod tests {
 
     #[test]
     fn wal_crc_detects_corruption() {
+        use byteorder::{LittleEndian, WriteBytesExt};
+
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("wal.log");
 
-        std::fs::write(&path, vec![0, 1, 2, 3, 4]).unwrap();
+        // Build a complete body: seq=1, op=Put(0), key_len=1, key='k', val_len=1, val='v'
+        let mut body = Vec::new();
+        body.write_u64::<LittleEndian>(1).unwrap();
+        body.write_u8(0).unwrap(); // op = Put
+        body.write_u32::<LittleEndian>(1).unwrap(); // key_len
+        body.extend_from_slice(b"k");
+        body.write_u32::<LittleEndian>(1).unwrap(); // val_len
+        body.extend_from_slice(b"v");
+
+        let record_len = (body.len() + 4) as u32; // body + crc
+
+        // Intentionally write a bogus CRC (0) so verify will fail
+        let mut file_bytes = Vec::new();
+        file_bytes.write_u32::<LittleEndian>(record_len).unwrap();
+        file_bytes.write_u32::<LittleEndian>(0).unwrap(); // bogus CRC
+        file_bytes.extend_from_slice(&body);
+
+        std::fs::write(&path, &file_bytes).unwrap();
 
         let mut mem = Memtable::new();
         let res = replay_wal_and_build(path.to_str().unwrap(), &mut mem);
